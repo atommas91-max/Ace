@@ -1,6 +1,6 @@
 # Ace
 
-A gamified English learning web app: vocabulary quizzes with XP, levels, streaks, badges, and a leaderboard.
+A gamified English learning web app: vocabulary quizzes with a poker hand-building twist, XP, levels, streaks, badges, and a leaderboard.
 
 ## Stack
 
@@ -47,8 +47,9 @@ Connect the GitHub repo to a Vercel project (Vite framework preset is auto-detec
 
 All XP/level/streak/badge logic lives in `src/features/gamification/gamification.ts`, behind a single `awardQuizCompletion` function. Any future content type (grammar, reading, listening) should call this same function on completion so scoring stays consistent across the app.
 
-- **XP & levels**: 10 XP per correct answer, +20 bonus on your first ever quiz. Level = `floor(sqrt(xp / 100))`.
-- **Streaks**: increments once per calendar day you complete a quiz; resets if you miss a day.
+- **Poker hands**: each quiz is a 5-question round (`src/features/flashcards/QuizPage.tsx`). A correct answer draws a card from a shuffled 52-card deck (`src/features/poker/deck.ts`); the 5 cards collected are evaluated as a poker hand (`src/features/poker/handEvaluator.ts`) — pair, flush, full house, etc. — each hand rank paying out an XP multiplier (1x for high card up to 25x for a royal flush).
+- **XP & levels**: 10 XP per correct answer × the round's poker multiplier, +20 bonus on your first ever quiz. Level = `floor(sqrt(xp / 100))`.
+- **Streaks**: increments once per calendar day you complete a round; resets if you miss a day.
 - **Badges**: awarded automatically (first quiz, 7-day streak, more to come) — see the `badges` table.
 - **Leaderboard**: a public Postgres view (`leaderboard`) ranking all profiles by total XP.
 
@@ -59,9 +60,10 @@ src/
   lib/               — Supabase client + shared domain types
   features/
     auth/            — signup/login, auth context
-    flashcards/      — deck list, quiz flow
+    flashcards/      — deck list, poker-round quiz flow
     gamification/    — XP/level/streak/badge engine, profile page
     leaderboard/     — leaderboard page
+    poker/           — playing card deck, hand evaluator, card UI
   components/        — shared UI (NavBar, ProtectedRoute)
   routes/            — top-level pages (Home)
 supabase/

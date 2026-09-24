@@ -1,9 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../auth/AuthProvider'
 import { awardQuizCompletion, type AwardOutcome } from '../gamification/gamification'
+import { createShuffledDeck, type Card } from '../poker/deck'
+import { evaluateHand, type HandEvaluation } from '../poker/handEvaluator'
+import { PokerCard } from '../poker/PokerCard'
 import type { Word } from '../../lib/database.types'
+
+const QUESTIONS_PER_ROUND = 5
 
 interface Question {
   word: Word
@@ -15,7 +20,8 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 function buildQuestions(words: Word[]): Question[] {
-  return words.map((word) => {
+  const roundWords = shuffle(words).slice(0, QUESTIONS_PER_ROUND)
+  return roundWords.map((word) => {
     const distractors = shuffle(words.filter((w) => w.id !== word.id))
       .slice(0, 3)
       .map((w) => w.definition)
@@ -26,13 +32,26 @@ function buildQuestions(words: Word[]): Question[] {
 export function QuizPage() {
   const { deckId } = useParams<{ deckId: string }>()
   const { user } = useAuth()
+  const [allWords, setAllWords] = useState<Word[]>([])
   const [questions, setQuestions] = useState<Question[]>([])
+  const cardDeckRef = useRef<Card[]>([])
+  const [handCards, setHandCards] = useState<Card[]>([])
   const [loading, setLoading] = useState(true)
   const [current, setCurrent] = useState(0)
   const [correctCount, setCorrectCount] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<AwardOutcome | null>(null)
   const [awarding, setAwarding] = useState(false)
+
+  function startRound(words: Word[]) {
+    setQuestions(buildQuestions(words))
+    cardDeckRef.current = createShuffledDeck()
+    setHandCards([])
+    setCurrent(0)
+    setCorrectCount(0)
+    setSelected(null)
+    setOutcome(null)
+  }
 
   useEffect(() => {
     if (!deckId) return
@@ -41,13 +60,16 @@ export function QuizPage() {
       .select('*')
       .eq('deck_id', deckId)
       .then(({ data }) => {
-        setQuestions(buildQuestions((data ?? []) as Word[]))
+        const words = (data ?? []) as Word[]
+        setAllWords(words)
+        startRound(words)
         setLoading(false)
       })
   }, [deckId])
 
   const question = questions[current]
   const finished = current >= questions.length && questions.length > 0
+  const handEvaluation: HandEvaluation | null = finished ? evaluateHand(handCards) : null
 
   const percent = useMemo(
     () => (questions.length ? Math.round((correctCount / questions.length) * 100) : 0),
@@ -55,18 +77,27 @@ export function QuizPage() {
   )
 
   useEffect(() => {
-    if (finished && user && !outcome && !awarding) {
+    if (finished && user && !outcome && !awarding && handEvaluation) {
       setAwarding(true)
-      awardQuizCompletion(user.id, { correctCount, totalCount: questions.length })
+      awardQuizCompletion(user.id, {
+        correctCount,
+        totalCount: questions.length,
+        multiplier: handEvaluation.multiplier,
+      })
         .then(setOutcome)
         .finally(() => setAwarding(false))
     }
-  }, [finished, user, outcome, awarding, correctCount, questions.length])
+  }, [finished, user, outcome, awarding, correctCount, questions.length, handEvaluation])
 
   function choose(option: string) {
     if (selected) return
     setSelected(option)
-    if (option === question.word.definition) setCorrectCount((c) => c + 1)
+    const isCorrect = option === question.word.definition
+    if (isCorrect) {
+      setCorrectCount((c) => c + 1)
+      const drawn = cardDeckRef.current.shift()
+      if (drawn) setHandCards((hand) => [...hand, drawn])
+    }
     setTimeout(() => {
       setSelected(null)
       setCurrent((c) => c + 1)
@@ -78,11 +109,23 @@ export function QuizPage() {
   if (finished) {
     return (
       <div className="container">
-        <h1>Quiz complete!</h1>
+        <h1>Round complete!</h1>
         <div className="card">
           <p>
             You got <strong>{correctCount}</strong> / {questions.length} correct ({percent}%).
           </p>
+
+          <div style={{ display: 'flex', gap: 8, margin: '16px 0' }}>
+            {Array.from({ length: QUESTIONS_PER_ROUND }).map((_, i) => (
+              <PokerCard key={i} card={handCards[i]} />
+            ))}
+          </div>
+          {handEvaluation && (
+            <p style={{ fontSize: 18, fontWeight: 700 }}>
+              {handEvaluation.label} — {handEvaluation.multiplier}x XP
+            </p>
+          )}
+
           {awarding && <p>Saving your progress…</p>}
           {outcome && (
             <>
@@ -95,7 +138,10 @@ export function QuizPage() {
             </>
           )}
           <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-            <Link to="/decks" className="btn">Back to decks</Link>
+            <button type="button" className="btn" onClick={() => startRound(allWords)}>
+              Play another round
+            </button>
+            <Link to="/decks" className="btn btn-secondary">Back to decks</Link>
             <Link to="/profile" className="btn btn-secondary">View profile</Link>
           </div>
         </div>
@@ -103,13 +149,20 @@ export function QuizPage() {
     )
   }
 
-  if (!question) return <div className="container">This deck has no words yet.</div>
+  if (!question) return <div className="container">This deck needs at least a few words to play.</div>
 
   return (
     <div className="container">
       <p style={{ color: 'var(--text-muted)' }}>
         Question {current + 1} of {questions.length}
       </p>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {Array.from({ length: QUESTIONS_PER_ROUND }).map((_, i) => (
+          <PokerCard key={i} card={handCards[i]} />
+        ))}
+      </div>
+
       <div className="card">
         <h2>{question.word.term}</h2>
         {question.word.example_sentence && (

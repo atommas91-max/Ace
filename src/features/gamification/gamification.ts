@@ -24,6 +24,8 @@ function isToday(dateStr: string, today: Date): boolean {
 export interface QuizResult {
   correctCount: number
   totalCount: number
+  /** XP multiplier applied to the correct-answer portion of the score (e.g. from a poker hand bonus). Defaults to 1. */
+  multiplier?: number
 }
 
 export interface AwardOutcome {
@@ -66,8 +68,10 @@ export async function awardQuizCompletion(
     .eq('user_id', userId)
 
   const isFirstQuiz = (priorQuizCount ?? 0) === 0
+  const multiplier = result.multiplier ?? 1
   const xpAwarded =
-    result.correctCount * XP_PER_CORRECT_ANSWER + (isFirstQuiz ? FIRST_COMPLETION_BONUS : 0)
+    Math.round(result.correctCount * XP_PER_CORRECT_ANSWER * multiplier) +
+    (isFirstQuiz ? FIRST_COMPLETION_BONUS : 0)
 
   await supabase.from('xp_events').insert({
     user_id: userId,
